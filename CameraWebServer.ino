@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include "esp_camera.h"
 #include <WiFi.h>
+#include <PubSubClient.h>
 
 // ===========================
 // Select camera model in board_config.h
@@ -14,8 +15,24 @@
 const char *ssid = WIFI_SSID;
 const char *password = WIFI_PASSWORD;
 
+// ===========================
+// MQTT
+// ===========================
+const char *mqttClientId = "esp32cam-cam1";
+const char *topicoPedido = "ovitrampa/cam1/capturar";
+const char *topicoFoto = "ovitrampa/cam1/foto";
+
+WiFiClient wifiClient;
+PubSubClient mqtt(wifiClient);
+volatile bool pedidoFoto = false;
+unsigned long ultimaTentativaMqtt = 0;
+
 void startCameraServer();
 void setupLedFlash();
+
+void mqttCallback(char *topic, byte *payload, unsigned int length) {
+  pedidoFoto = true;
+}
 
 void setup() {
   Serial.begin(115200);
@@ -86,7 +103,7 @@ void setup() {
   }
 
   if (config.pixel_format == PIXFORMAT_JPEG) {
-    s->set_framesize(s, FRAMESIZE_QVGA);
+    s->set_framesize(s, FRAMESIZE_SVGA);
   }
 
 #if defined(LED_GPIO_NUM)
@@ -109,8 +126,45 @@ void setup() {
   Serial.print("Camera Ready! Use 'http://");
   Serial.print(WiFi.localIP());
   Serial.println("' to connect");
+
+  mqtt.setServer(MQTT_HOST, MQTT_PORT);
+  mqtt.setCallback(mqttCallback);
 }
 
 void loop() {
-  delay(10000);
+  if (!mqtt.connected()) {
+    if (millis() - ultimaTentativaMqtt >= 5000) {
+      ultimaTentativaMqtt = millis();
+      if (mqtt.connect(mqttClientId)) {
+        Serial.println("MQTT conectado");
+        mqtt.subscribe(topicoPedido);
+      } else {
+        Serial.printf("MQTT falhou, state=%d\n", mqtt.state());
+      }
+    }
+  }
+  mqtt.loop();
+
+  if (pedidoFoto) {
+    pedidoFoto = false;
+    Serial.println("Pedido recebido");
+
+    camera_fb_t *fb = esp_camera_fb_get();
+    if (!fb) {
+      Serial.println("Falha ao capturar foto");
+      return;
+    }
+
+    bool ok = mqtt.beginPublish(topicoFoto, fb->len, false);
+    if (ok) {
+      ok = mqtt.write(fb->buf, fb->len) == fb->len;
+      ok = mqtt.endPublish() && ok;
+    }
+    if (ok) {
+      Serial.printf("Foto enviada: %u bytes\n", fb->len);
+    } else {
+      Serial.printf("Falha ao enviar foto (%u bytes), state=%d\n", fb->len, mqtt.state());
+    }
+    esp_camera_fb_return(fb);
+  }
 }

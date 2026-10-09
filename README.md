@@ -13,6 +13,9 @@ As credenciais ficam em `secrets.h`, que está no `.gitignore` e não vai para o
 #define WIFI_SSID     "nome_da_rede"
 #define WIFI_PASSWORD "senha_da_rede"
 
+#define MQTT_HOST "192.168.1.100"  // IP do PC onde roda o Mosquitto
+#define MQTT_PORT 1883
+
 #endif  // SECRETS_H
 ```
 
