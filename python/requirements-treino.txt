@@ -1,0 +1,4 @@
+# PyTorch com CUDA é instalado antes, à parte:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
+ultralytics==8.4.175
+paho-mqtt==2.1.0

@@ -1,3 +1,7 @@
 secrets.h
 .claude/
 capturas/
+python/.venv/
+python/datasets/
+python/runs/
+*.pt
