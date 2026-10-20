@@ -1,0 +1,3 @@
+[submodule "esp32-camera-contadora"]
+	path = esp32-camera-contadora
+	url = https://github.com/IgorACNC/esp32-camera-contadora.git
