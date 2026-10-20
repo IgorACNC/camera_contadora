@@ -3,5 +3,4 @@ secrets.h
 capturas/
 python/.venv/
 python/datasets/
-python/runs/
 *.pt
