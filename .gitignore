@@ -4,3 +4,6 @@ capturas/
 python/.venv/
 python/datasets/
 *.pt
+dashboard-web/node_modules/
+dashboard-web/dist/
+__pycache__/

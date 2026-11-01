@@ -86,6 +86,38 @@ python/.venv/Scripts/python.exe python/captura_mqtt.py
 
 **Alternativa via HTTP:** o firmware também serve `http://<IP da câmera>/capture`, que devolve uma foto JPEG direto no navegador. O IP aparece no Serial Monitor da câmera.
 
+## Dashboard (tempo real)
+
+Página web que dispara as capturas e mostra as métricas ao vivo: contagem e foto anotada, etapas da captura (pedido → foto → contando → pronto), status do MQTT, da câmera e do modelo, tempos de captura e inferência, gráficos e histórico.
+
+- **Backend:** `python/servidor_dashboard.py` (FastAPI). Mantém a conexão MQTT aberta, roda o YOLO e manda eventos ao navegador por WebSocket. O histórico fica em `capturas/dashboard.db` (SQLite).
+- **Frontend:** `dashboard-web/` (React + Vite + Recharts).
+- **Disparo:** botão "Capturar agora" e captura automática a cada N minutos, configurável na própria página. O limiar de confiança também pode ser ajustado lá.
+
+**Instalar (uma vez só):**
+
+```powershell
+python/.venv/Scripts/python.exe -m pip install -r python/requirements-dashboard.txt
+cd dashboard-web; npm install; npm run build; cd ..
+```
+
+**Rodar:**
+
+```powershell
+python/.venv/Scripts/python.exe python/servidor_dashboard.py
+```
+
+Abra **http://localhost:8000**. Opções:
+
+| Opção | O que faz |
+|-------|-----------|
+| `--mqtt-host <IP>` / `--mqtt-port` | Broker MQTT (padrão `localhost:1883`) |
+| `--modelo <best.pt>` | Pesos do YOLO. Padrão: o `best.pt` mais recente em `python/runs/*/weights/` |
+| `--simular` | Sem câmera: usa fotos de teste do dataset. Sem modelo, a contagem usa os rótulos do dataset |
+| `--host 0.0.0.0` | Deixa abrir o dashboard de outro computador ou celular na mesma rede |
+
+**Desenvolvendo o frontend:** com o backend rodando, `cd dashboard-web; npm run dev` abre em http://localhost:5173 com recarga automática. API e WebSocket são repassados para a porta 8000.
+
 ## Modelo YOLO (contagem)
 
 - **Modelo:** **YOLO26s**, com uma única classe, **"ovo"**. As classes originais aegypti e albopictus foram unidas.
@@ -113,5 +145,7 @@ https://universe.roboflow.com/mosquito-eggs/aedes-eggs-mntab/dataset/6
 |---------|----------|
 | `esp32-camera-contadora/` | Submódulo com o firmware da ESP32-CAM (PlatformIO + FreeRTOS) |
 | `python/` | Scripts de captura (`captura_mqtt.py`), contagem (`contar_ovos.py`) e treino (`treino/`), além do zip do dataset |
+| `python/dashboard/` | Backend do dashboard (API, WebSocket, MQTT, YOLO, SQLite) |
+| `dashboard-web/` | Frontend React do dashboard |
 | `capturas/` | Fotos capturadas e anotadas (fora do git) |
 | `Projeto-Embarcados_CesarSchool-CSBC.pdf` | Enunciado da disciplina |
