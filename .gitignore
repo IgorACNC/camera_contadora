@@ -3,4 +3,5 @@ secrets.h
 capturas/
 python/.venv/
 python/datasets/
-*.pt
+.agents
+skills-lock.json

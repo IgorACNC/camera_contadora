@@ -7,7 +7,7 @@ import cv2
 from ultralytics import YOLO
 
 PYTHON_DIR = Path(__file__).resolve().parent
-MODELO_PADRAO = PYTHON_DIR / "runs" / "ovos_yolo26s" / "weights" / "best.pt"
+MODELO_PADRAO = PYTHON_DIR / "runs" / "ovos_yolo26s-2" / "weights" / "best.pt"
 PASTA_ANOTADAS = PYTHON_DIR.parent / "capturas" / "anotadas"
 CONF_SEM_AVALIACAO = 0.25
 
