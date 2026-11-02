@@ -3,7 +3,10 @@ secrets.h
 capturas/
 python/.venv/
 python/datasets/
-*.pt
+.agents
+skills-lock.json
 dashboard-web/node_modules/
 dashboard-web/dist/
 __pycache__/
+last.pt
+yolo26s.pt
