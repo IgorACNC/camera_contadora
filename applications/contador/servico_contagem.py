@@ -8,6 +8,7 @@ import argparse
 import json
 import queue
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -18,6 +19,7 @@ from ultralytics import YOLO
 
 TOPICO_FOTO = "ovitrampa/cam1/foto"
 TOPICO_CONTAGEM = "ovitrampa/cam1/contagem"
+TOPICO_STATUS = "ovitrampa/servico/status"  # retido: "online" ou "offline" (Last Will)
 RAIZ = Path(__file__).resolve().parents[2]
 MODELO_PADRAO = RAIZ / "python" / "runs" / "ovos_yolo26s-2" / "weights" / "best.pt"
 PASTA_CAPTURAS = RAIZ / "capturas"
@@ -47,8 +49,11 @@ def processar(payload, model, conf, client):
     anotada = PASTA_ANOTADAS / nome
     original.write_bytes(payload)
 
+    t0 = time.perf_counter()
     r = model.predict(img, conf=conf, max_det=1000, verbose=False)[0]
+    tempo_inferencia_ms = round((time.perf_counter() - t0) * 1000, 1)
     n = len(r.boxes)
+    conf_media = round(float(r.boxes.conf.mean()), 4) if n else None
     cv2.imwrite(str(anotada), r.plot(labels=False, conf=False, line_width=1))
 
     altura, largura = img.shape[:2]
@@ -56,6 +61,8 @@ def processar(payload, model, conf, client):
     resultado = {
         "ovos": n,
         "conf": conf,
+        "conf_media": conf_media,
+        "tempo_inferencia_ms": tempo_inferencia_ms,
         "horario": horario,
         "arquivo": str(original),
         "anotada": str(anotada),
@@ -87,6 +94,7 @@ def main():
             return
         # Assinar aqui faz a assinatura voltar sozinha após uma reconexão.
         client.subscribe(TOPICO_FOTO)
+        client.publish(TOPICO_STATUS, "online", retain=True)
         print(f"Aguardando fotos em {TOPICO_FOTO}")
 
     def on_message(client, userdata, msg):
@@ -96,6 +104,8 @@ def main():
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
     client.on_connect = on_connect
     client.on_message = on_message
+    # Se o processo morrer sem desconectar, o broker publica "offline" por nós.
+    client.will_set(TOPICO_STATUS, "offline", retain=True)
 
     try:
         client.connect(args.host, args.port)
@@ -114,8 +124,10 @@ def main():
     except KeyboardInterrupt:
         print("Encerrando...")
     finally:
-        client.loop_stop()
+        # Saída limpa não dispara o Last Will: publicar "offline" antes de desconectar.
+        client.publish(TOPICO_STATUS, "offline", retain=True).wait_for_publish(timeout=2)
         client.disconnect()
+        client.loop_stop()
     return 0
 
 

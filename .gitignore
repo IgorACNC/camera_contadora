@@ -5,3 +5,8 @@ python/.venv/
 python/datasets/
 .agents
 skills-lock.json
+dashboard-web/node_modules/
+dashboard-web/dist/
+__pycache__/
+last.pt
+yolo26s.pt
