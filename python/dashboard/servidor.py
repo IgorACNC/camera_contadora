@@ -1,7 +1,9 @@
 """API e WebSocket do dashboard.
 
 Fluxo de uma captura (manual ou automática), com um evento WebSocket a cada etapa:
-pedido -> foto -> contando -> pronto (ou erro).
+pedido -> contando -> pronto (ou erro). A contagem é feita pelo applications/contador/servico_contagem.py;
+o dashboard só pede a foto e recebe o resultado pelo MQTT. Contagens que chegam sem pedido do
+dashboard (ex.: captura_mqtt.py, enviar_imagem.py) entram no histórico com origem "externa".
 """
 
 import asyncio
@@ -21,20 +23,18 @@ from captura_mqtt import PASTA_CAPTURAS
 
 from .banco import Banco
 from .camera import CameraMQTT, CameraSimulada, ErroCaptura
-from .contador import Contador
 
 PASTA_ANOTADAS = PASTA_CAPTURAS / "anotadas"
 FRONT_DIST = PASTA_CAPTURAS.parent / "dashboard-web" / "dist"
-TIMEOUT_CAPTURA_S = 15
+TIMEOUT_CAPTURA_S = 30
 HISTORICO_INICIAL = 200
-CONFIG_PADRAO = {"auto_ativo": False, "intervalo_min": 10.0, "conf": None}
+CONFIG_PADRAO = {"auto_ativo": False, "intervalo_min": 10.0}
 
 
 @dataclass
 class Opcoes:
     host: str = "localhost"
     port: int = 1883
-    modelo: Path | None = None
     simular: bool = False
     zip_dataset: Path | None = None
 
@@ -59,35 +59,64 @@ class Hub:
 class ConfigEntrada(BaseModel):
     auto_ativo: bool | None = None
     intervalo_min: float | None = Field(default=None, ge=0.5, le=24 * 60)
-    conf: float | None = Field(default=None, ge=0.05, le=0.95)
 
 
 def agora() -> datetime:
     return datetime.now()
 
 
+def _numero(x) -> float | None:
+    return float(x) if isinstance(x, (int, float)) and not isinstance(x, bool) else None
+
+
+def _nome_arquivo(caminho) -> str | None:
+    # O JSON traz o caminho completo do serviço; o banco guarda só o nome (servido por /fotos).
+    return re.split(r"[\\/]", caminho)[-1] if isinstance(caminho, str) else None
+
+
+def campos_da_contagem(dados: dict) -> dict:
+    """Colunas do banco a partir do JSON publicado pelo servico_contagem.py."""
+    foto = _nome_arquivo(dados.get("arquivo"))
+    arquivo = PASTA_CAPTURAS / foto if foto else None
+    return {
+        "status": "ok",
+        "ovos": dados["ovos"],
+        "conf_media": _numero(dados.get("conf_media")),
+        "tempo_inferencia_ms": _numero(dados.get("tempo_inferencia_ms")),
+        "foto": foto,
+        "foto_anotada": _nome_arquivo(dados.get("anotada")),
+        "bytes": arquivo.stat().st_size if arquivo and arquivo.is_file() else None,
+        "modo": "yolo",
+    }
+
+
 def criar_app(opcoes: Opcoes) -> FastAPI:
     hub = Hub()
     banco = Banco(PASTA_CAPTURAS / "dashboard.db")
-    contador = Contador(opcoes.modelo)
     trava = asyncio.Lock()
-    estado = {"config": banco.ler_config(CONFIG_PADRAO), "proxima_auto": None, "etapa": None}
+    estado = {"config": banco.ler_config(CONFIG_PADRAO), "proxima_auto": None, "etapa": None, "conf_ultimo": None}
     loop_ref: dict = {}
 
-    def mudou_conexao():
-        # Chamado pela thread do paho-mqtt: agenda o envio no event loop.
+    def agendar(coro_fn):
+        # Chamado pela thread do paho-mqtt: agenda a corrotina no event loop.
         loop = loop_ref.get("loop")
         if loop is not None:
-            loop.call_soon_threadsafe(lambda: asyncio.ensure_future(hub.enviar(status())))
+            loop.call_soon_threadsafe(lambda: asyncio.ensure_future(coro_fn()))
+
+    def mudou_conexao():
+        agendar(lambda: hub.enviar(status()))
+
+    def resultado_externo(dados: dict):
+        agendar(lambda: registrar_externa(dados))
 
     if opcoes.simular:
-        camera = CameraSimulada(opcoes.zip_dataset, mudou_conexao)
+        camera = CameraSimulada(opcoes.host, opcoes.port, opcoes.zip_dataset, mudou_conexao, resultado_externo)
     else:
-        camera = CameraMQTT(opcoes.host, opcoes.port, mudou_conexao)
+        camera = CameraMQTT(opcoes.host, opcoes.port, mudou_conexao, resultado_externo)
 
-    def conf_atual() -> float:
-        c = estado["config"]["conf"]
-        return c if c is not None else contador.conf_padrao
+    def registrar_contagem(cid: int, dados: dict, **extras) -> dict:
+        estado["conf_ultimo"] = _numero(dados.get("conf"))
+        return banco.atualizar(cid, **campos_da_contagem(dados), **extras)
 
     def status() -> dict:
         e = camera.estado
@@ -96,14 +125,8 @@ def criar_app(opcoes: Opcoes) -> FastAPI:
             "simulacao": opcoes.simular,
             "mqtt": {"conectado": e.conectado, "erro": e.erro, **e.extras},
             "camera": {"estado": e.camera, "ultima_foto": e.ultima_foto},
-            "modelo": {
-                "pronto": contador.pronto,
-                "carregando": contador.model is None and contador.erro is None,
-                "caminho": str(contador.caminho) if contador.caminho else None,
-                "erro": contador.erro,
-                "conf_padrao": contador.conf_padrao,
-            },
-            "config": {**estado["config"], "conf_efetivo": conf_atual()},
+            "servico": {"online": e.servico_online},
+            "config": {**estado["config"], "conf_ultimo": estado["conf_ultimo"]},
             "proxima_auto": estado["proxima_auto"].isoformat(timespec="seconds") if estado["proxima_auto"] else None,
             "ocupado": trava.locked(),
             "etapa": estado["etapa"],
@@ -121,30 +144,20 @@ def criar_app(opcoes: Opcoes) -> FastAPI:
             await etapa(cid, "pedido", origem=origem)
             try:
                 t0 = time.perf_counter()
-                foto = await asyncio.to_thread(camera.capturar, TIMEOUT_CAPTURA_S)
-                tempo_captura = (time.perf_counter() - t0) * 1000
+                pedido = asyncio.ensure_future(asyncio.to_thread(camera.capturar, TIMEOUT_CAPTURA_S))
+                # As falhas de pré-condição (broker ou serviço offline) acontecem na hora, antes de publicar:
+                # nesse caso a etapa "contando" não aparece e o erro fica no lugar dela.
+                await asyncio.wait({pedido}, timeout=0.1)
+                if not pedido.done():
+                    await etapa(cid, "contando")
+                dados = await pedido
+                total_ms = (time.perf_counter() - t0) * 1000
 
-                nome = f"foto_{inicio:%Y%m%d_%H%M%S}_{cid:05d}.jpg"
-                PASTA_ANOTADAS.mkdir(parents=True, exist_ok=True)
-                caminho = PASTA_CAPTURAS / nome
-                caminho.write_bytes(foto.dados)
-                banco.atualizar(cid, foto=nome, bytes=len(foto.dados), tempo_captura_ms=tempo_captura)
-                await etapa(cid, "foto", foto=nome, bytes=len(foto.dados), tempo_ms=round(tempo_captura))
-
-                await etapa(cid, "contando")
-                res = await asyncio.to_thread(
-                    contador.contar, caminho, PASTA_ANOTADAS / nome, conf_atual(), foto.rotulos
+                inferencia = _numero(dados.get("tempo_inferencia_ms"))
+                registro = registrar_contagem(
+                    cid, dados, tempo_captura_ms=total_ms - inferencia if inferencia is not None else total_ms
                 )
-                registro = banco.atualizar(
-                    cid,
-                    status="ok",
-                    ovos=res.ovos,
-                    conf_media=res.conf_media,
-                    tempo_inferencia_ms=res.tempo_ms,
-                    foto_anotada=nome,
-                    modo=res.modo,
-                )
-                await etapa(cid, "pronto", ovos=res.ovos)
+                await etapa(cid, "pronto", ovos=dados["ovos"])
             except Exception as e:  # qualquer falha vira uma captura com erro, sem derrubar o agendador
                 msg = str(e) if isinstance(e, ErroCaptura) else f"{type(e).__name__}: {e}"
                 registro = banco.atualizar(cid, status="erro", erro=msg)
@@ -152,6 +165,13 @@ def criar_app(opcoes: Opcoes) -> FastAPI:
             await hub.enviar({"tipo": "captura", "captura": registro})
         await hub.enviar(status())
         return registro
+
+    async def registrar_externa(dados: dict):
+        """Contagem que chegou sem pedido do dashboard: vira uma captura com origem "externa"."""
+        cid = banco.nova_captura(agora().isoformat(timespec="seconds"), "externa")
+        registro = registrar_contagem(cid, dados)
+        await hub.enviar({"tipo": "captura", "captura": registro})
+        await hub.enviar(status())
 
     async def agendador():
         """Dispara capturas automáticas no intervalo configurado."""
@@ -174,12 +194,6 @@ def criar_app(opcoes: Opcoes) -> FastAPI:
         banco.marcar_interrompidas()
         camera.iniciar()
         tarefas = [asyncio.create_task(agendador())]
-
-        async def carregar_modelo():
-            await asyncio.to_thread(contador.carregar)
-            await hub.enviar(status())
-
-        tarefas.append(asyncio.create_task(carregar_modelo()))
         try:
             yield
         finally:

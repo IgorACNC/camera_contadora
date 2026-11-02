@@ -29,13 +29,12 @@ export default function App() {
       </header>
 
       {status?.simulacao && (
-        <div className="aviso">
-          Modo simulação: as fotos vêm do conjunto de teste do dataset, não da câmera.
-          {!status.modelo.pronto && " Sem modelo treinado, a contagem usa os rótulos do dataset."}
-        </div>
+        <div className="aviso">Modo simulação: as fotos vêm do conjunto de teste do dataset, não da câmera.</div>
       )}
-      {status && !status.simulacao && status.modelo.erro && (
-        <div className="aviso erro">Modelo indisponível: {status.modelo.erro}</div>
+      {status && !status.servico.online && (
+        <div className="aviso erro">
+          Serviço de contagem offline — rode applications/contador/servico_contagem.py
+        </div>
       )}
 
       <Kpis capturas={capturas} />

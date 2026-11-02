@@ -54,7 +54,7 @@ export default function Kpis({ capturas }) {
       <Kpi
         rotulo="Confiança média"
         valor={fmtPct(ultima?.conf_media)}
-        detalhe={ultima?.modo === "rotulos" ? "simulação (rótulos)" : "das detecções"}
+        detalhe="das detecções"
       />
     </section>
   );

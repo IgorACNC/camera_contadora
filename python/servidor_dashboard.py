@@ -1,5 +1,7 @@
 """Sobe o backend do dashboard (API + WebSocket) em http://localhost:8000.
 
+Precisa do applications/contador/servico_contagem.py rodando: é ele que conta os ovos.
+
 Exemplos (a partir da raiz do projeto):
   python/.venv/Scripts/python.exe python/servidor_dashboard.py
   python/.venv/Scripts/python.exe python/servidor_dashboard.py --mqtt-host 192.168.0.10
@@ -11,7 +13,6 @@ from pathlib import Path
 
 import uvicorn
 
-from dashboard.contador import achar_modelo
 from dashboard.servidor import Opcoes, criar_app
 
 PYTHON_DIR = Path(__file__).resolve().parent
@@ -22,11 +23,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--mqtt-host", default="localhost", help="endereço do broker MQTT")
     parser.add_argument("--mqtt-port", type=int, default=1883)
-    parser.add_argument("--modelo", type=Path, help="best.pt (padrão: o mais recente em python/runs/*/weights/)")
     parser.add_argument(
         "--simular",
         action="store_true",
-        help="não usa a câmera: pega fotos de teste do dataset. Sem modelo, usa os rótulos como contagem.",
+        help="publica fotos de teste do dataset no MQTT; precisa do servico_contagem.py rodando",
     )
     parser.add_argument("--host", default="127.0.0.1", help="use 0.0.0.0 para abrir o dashboard na rede local")
     parser.add_argument("--port", type=int, default=8000)
@@ -35,7 +35,6 @@ def main():
     opcoes = Opcoes(
         host=args.mqtt_host,
         port=args.mqtt_port,
-        modelo=args.modelo or achar_modelo(),
         simular=args.simular,
         zip_dataset=ZIP_DATASET,
     )

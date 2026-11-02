@@ -1,10 +1,9 @@
 import { useEffect, useState } from "react";
-import { fmtBytes, fmtMs } from "../formato.js";
+import { fmtMs } from "../formato.js";
 
 const PASSOS = [
   { id: "pedido", nome: "Pedido enviado", desc: "MQTT → câmera" },
-  { id: "foto", nome: "Foto recebida", desc: "JPEG da ESP32-CAM" },
-  { id: "contando", nome: "Contando ovos", desc: "inferência YOLO" },
+  { id: "contando", nome: "Contando ovos", desc: "foto da câmera + YOLO no serviço" },
   { id: "pronto", nome: "Pronto", desc: "resultado salvo" },
 ];
 
@@ -44,7 +43,6 @@ export default function Etapas({ etapas, ocupado }) {
           const classe = falhou ? "falhou" : feito ? "feito" : ativo ? "ativo" : "";
           const partes = [];
           if (feito && t0 != null) partes.push(`+${fmtMs(new Date(feito.em).getTime() - t0)}`);
-          if (p.id === "foto" && feito) partes.push(fmtBytes(feito.bytes));
           if (p.id === "pronto" && feito) partes.push(`${feito.ovos} ovos`);
           const extra = partes.length ? partes.join(" · ") : null;
           return (

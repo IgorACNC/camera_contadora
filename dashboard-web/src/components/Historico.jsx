@@ -38,7 +38,7 @@ export default function Historico({ capturas, selecionada, selecionar }) {
                 >
                   <td>{c.id}</td>
                   <td>{fmtDataHora(c.inicio)}</td>
-                  <td>{c.origem === "auto" ? "automática" : "manual"}</td>
+                  <td>{{ auto: "automática", externa: "externa" }[c.origem] ?? "manual"}</td>
                   <td className="num forte">{c.ovos ?? "—"}</td>
                   <td className="num">{fmtPct(c.conf_media)}</td>
                   <td className="num">{fmtMs(c.tempo_captura_ms)}</td>

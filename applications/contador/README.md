@@ -13,6 +13,7 @@ servico_contagem.py ── ovitrampa/cam1/contagem (JSON) ──► quem assinar
 | `ovitrampa/cam1/capturar` | Pedido de foto para a câmera (qualquer payload) |
 | `ovitrampa/cam1/foto` | JPEG, vindo da câmera ou do `enviar_imagem.py` |
 | `ovitrampa/cam1/contagem` | Resultado em JSON |
+| `ovitrampa/servico/status` | `online` ou `offline`, **retido**. O serviço publica `online` ao conectar e `offline` ao sair com Ctrl+C. Se o processo morrer, o broker publica `offline` (Last Will) |
 
 Para cada foto recebida, o serviço:
 - salva a original em `capturas/foto_AAAAMMDD_HHMMSS_ffffff.jpg`;
@@ -25,6 +26,8 @@ Para cada foto recebida, o serviço:
 {
   "ovos": 42,
   "conf": 0.4,
+  "conf_media": 0.7312,
+  "tempo_inferencia_ms": 85.3,
   "horario": "2026-10-29T14:03:12",
   "arquivo": "A:\\CameraWebServer\\capturas\\foto_20261029_140312_123456.jpg",
   "anotada": "A:\\CameraWebServer\\capturas\\anotadas\\foto_20261029_140312_123456.jpg",
@@ -32,6 +35,10 @@ Para cada foto recebida, o serviço:
   "altura": 600
 }
 ```
+
+- `conf`: limiar de confiança usado na contagem.
+- `conf_media`: média da confiança das detecções (`null` quando não há ovos).
+- `tempo_inferencia_ms`: tempo do `predict` do YOLO.
 
 ## Como rodar (da raiz `A:\CameraWebServer`)
 
@@ -47,6 +54,9 @@ python\.venv\Scripts\python.exe python\captura_mqtt.py
 
 # Ver os resultados chegando (opcional)
 A:\Mosquitto\mosquitto_sub.exe -t ovitrampa/cam1/contagem -v
+
+# Ver se o serviço está no ar (opcional)
+A:\Mosquitto\mosquitto_sub.exe -t ovitrampa/servico/status -v
 ```
 
 Opções do serviço: `--host`, `--port`, `--modelo` (padrão `python/runs/ovos_yolo26s-2/weights/best.pt`) e `--conf` (padrão: o valor de `conf_contagem.txt`, ao lado do modelo).

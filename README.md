@@ -7,18 +7,95 @@ Projeto da disciplina **Sistemas Embarcados** (CESAR School).
 ## Arquitetura
 
 ```
-┌──────────────┐  ovitrampa/cam1/capturar   ┌───────────────────┐
-│              │ ◄───────────────────────── │                   │
-│  ESP32-CAM   │                            │  Mosquitto (PC)   │ ◄──► Python
-│  (OV2640)    │ ─────────────────────────► │  porta 1883       │      captura_mqtt.py
-│              │  ovitrampa/cam1/foto (JPEG)│                   │      contar_ovos.py (YOLO)
-└──────────────┘                            └───────────────────┘
+ESP32-CAM ◄── ovitrampa/cam1/capturar ──── dashboard / captura_mqtt.py
+    │
+    └──────── ovitrampa/cam1/foto (JPEG) ──► servico_contagem.py (YOLO26s)
+                                                   │
+dashboard ◄── ovitrampa/cam1/contagem (JSON) ──────┘
+dashboard ◄── ovitrampa/servico/status (online/offline, retido)
+
+Todas as mensagens passam pelo Mosquitto no PC (porta 1883).
 ```
 
-1. O script Python publica um pedido em `ovitrampa/cam1/capturar`.
+1. O dashboard (ou o `captura_mqtt.py`) publica um pedido em `ovitrampa/cam1/capturar`.
 2. A ESP32-CAM tira uma foto SVGA (800x600) e publica o JPEG em `ovitrampa/cam1/foto`.
-3. O script salva a foto em `capturas/`.
-4. O modelo YOLO conta os ovos da foto.
+3. O `servico_contagem.py` recebe a foto, roda o YOLO e salva a original e a anotada em `capturas/`.
+4. O serviço publica o resultado em JSON em `ovitrampa/cam1/contagem`, e o dashboard mostra.
+
+## Como rodar tudo
+
+Passo a passo do zero até o dashboard contando ovos. Os comandos rodam no PowerShell, a partir da raiz do repositório.
+
+### 0. Pré-requisitos
+
+| O quê | Para quê |
+|-------|----------|
+| Python 3.13 | serviço de contagem e backend do dashboard |
+| Node.js 20+ | compilar o frontend do dashboard |
+| [Mosquitto](https://mosquitto.org/download/) | broker MQTT no PC |
+| VS Code + PlatformIO | só para gravar o firmware na câmera |
+| GPU NVIDIA (opcional) | acelera o YOLO; sem ela roda na CPU, mais devagar |
+
+### 1. Clonar com o submódulo do firmware
+
+```powershell
+git clone --recurse-submodules https://github.com/IgorACNC/camera_contadora.git
+cd camera_contadora
+```
+
+### 2. Instalar (uma vez só)
+
+```powershell
+python -m venv python/.venv
+python/.venv/Scripts/python.exe -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
+python/.venv/Scripts/python.exe -m pip install -r python/requirements-treino.txt -r python/requirements-dashboard.txt
+cd dashboard-web; npm install; npm run build; cd ..
+```
+
+O modelo treinado já vem no repositório: `python/runs/ovos_yolo26s-2/weights/best.pt`, com o limiar em `conf_contagem.txt`. Não é preciso treinar.
+
+### 3. Configurar o Mosquitto
+
+No `mosquitto.conf`, deixe:
+
+```
+listener 1883
+allow_anonymous true
+```
+
+Reinicie o serviço do Mosquitto. Se a câmera não conectar, veja [MQTT](#mqtt): firewall e rede privada.
+
+### 4. Gravar a câmera (só com a ESP32-CAM)
+
+1. Descubra o IP do PC na rede Wi-Fi com `ipconfig` (campo "Endereço IPv4" do adaptador Wi-Fi).
+2. No submódulo `esp32-camera-contadora/`, copie `include/secrets.example.h` para `include/secrets.h` e preencha `WIFI_SSID`, `WIFI_PASSWORD` e `MQTT_HOST` (o IP do passo 1). A rede precisa ser de 2.4 GHz.
+3. Grave com o PlatformIO, como explicado no README do submódulo. O Serial deve mostrar `MQTT conectado`.
+
+> Se o IP do PC mudar (DHCP), a câmera mostra `MQTT falhou, state=-2`. Atualize o `MQTT_HOST` ou reserve o IP no roteador.
+
+Sem câmera? Pule este passo e use o `--simular` no passo 5.
+
+### 5. Rodar
+
+```powershell
+# Terminal 1 — serviço de contagem (obrigatório, deixe aberto)
+python/.venv/Scripts/python.exe applications/contador/servico_contagem.py
+
+# Terminal 2 — dashboard
+python/.venv/Scripts/python.exe python/servidor_dashboard.py              # com a câmera
+python/.venv/Scripts/python.exe python/servidor_dashboard.py --simular    # sem câmera (fotos do dataset)
+```
+
+Abra **http://localhost:8000** e clique em **Capturar agora**.
+
+### 6. Conferir que funcionou
+
+- A pílula do dashboard mostra **Contador online**.
+- Ao capturar, as etapas vão de pedido → contando → pronto, e aparecem a contagem e a foto anotada.
+- O Terminal 1 mostra a mesma contagem.
+- As fotos ficam em `capturas/`, e as anotadas em `capturas/anotadas/`.
+
+Mais detalhes: [Dashboard](#dashboard-tempo-real) · [Serviço de contagem](applications/contador/README.md) · [Modelo YOLO](#modelo-yolo-contagem).
 
 ## Firmware da câmera (outro repositório)
 
@@ -53,6 +130,8 @@ git push
 |--------|---------|----------|
 | `ovitrampa/cam1/capturar` | PC → câmera | Pedido de foto (qualquer payload) |
 | `ovitrampa/cam1/foto` | câmera → PC | JPEG binário |
+| `ovitrampa/cam1/contagem` | serviço → dashboard | Resultado da contagem em JSON (ver `applications/contador/README.md`) |
+| `ovitrampa/servico/status` | serviço → dashboard | `online` / `offline`, retido (Last Will) |
 
 - **Broker:** Mosquitto no PC. Ele precisa aceitar conexões da rede local:
   ```
@@ -88,11 +167,13 @@ python/.venv/Scripts/python.exe python/captura_mqtt.py
 
 ## Dashboard (tempo real)
 
-Página web que dispara as capturas e mostra as métricas ao vivo: contagem e foto anotada, etapas da captura (pedido → foto → contando → pronto), status do MQTT, da câmera e do modelo, tempos de captura e inferência, gráficos e histórico.
+Página web que dispara as capturas e mostra as métricas ao vivo: contagem e foto anotada, etapas da captura (pedido → contando → pronto), status do MQTT, da câmera e do contador, tempos de captura e inferência, gráficos e histórico.
 
-- **Backend:** `python/servidor_dashboard.py` (FastAPI). Mantém a conexão MQTT aberta, roda o YOLO e manda eventos ao navegador por WebSocket. O histórico fica em `capturas/dashboard.db` (SQLite).
+- **Contador:** o dashboard **não roda o YOLO**. Quem conta é o `applications/contador/servico_contagem.py`, que **precisa estar rodando**. O dashboard só pede a foto e recebe o JSON em `ovitrampa/cam1/contagem`. A pílula "Contador online/offline" vem do tópico `ovitrampa/servico/status`.
+- **Backend:** `python/servidor_dashboard.py` (FastAPI). Mantém a conexão MQTT aberta e manda eventos ao navegador por WebSocket. O histórico fica em `capturas/dashboard.db` (SQLite).
 - **Frontend:** `dashboard-web/` (React + Vite + Recharts).
-- **Disparo:** botão "Capturar agora" e captura automática a cada N minutos, configurável na própria página. O limiar de confiança também pode ser ajustado lá.
+- **Disparo:** botão "Capturar agora" e captura automática a cada N minutos, configurável na própria página. O limiar de confiança é o do serviço e só é exibido.
+- **Origem "externa":** toda contagem publicada pelo serviço entra no histórico. As que não foram pedidas pelo dashboard (por exemplo, uma foto pedida pelo `captura_mqtt.py` ou enviada pelo `enviar_imagem.py`) aparecem com origem **externa**.
 
 **Instalar (uma vez só):**
 
@@ -101,10 +182,14 @@ python/.venv/Scripts/python.exe -m pip install -r python/requirements-dashboard.
 cd dashboard-web; npm install; npm run build; cd ..
 ```
 
-**Rodar:**
+**Rodar** (da raiz do projeto):
 
-```powershell
-python/.venv/Scripts/python.exe python/servidor_dashboard.py
+```
+# Terminal 1 — contador (obrigatório)
+python\.venv\Scripts\python.exe applications\contador\servico_contagem.py
+# Terminal 2 — dashboard (abrir http://localhost:8000)
+python\.venv\Scripts\python.exe python\servidor_dashboard.py            # com a câmera
+python\.venv\Scripts\python.exe python\servidor_dashboard.py --simular  # sem câmera
 ```
 
 Abra **http://localhost:8000**. Opções:
@@ -112,8 +197,7 @@ Abra **http://localhost:8000**. Opções:
 | Opção | O que faz |
 |-------|-----------|
 | `--mqtt-host <IP>` / `--mqtt-port` | Broker MQTT (padrão `localhost:1883`) |
-| `--modelo <best.pt>` | Pesos do YOLO. Padrão: o `best.pt` mais recente em `python/runs/*/weights/` |
-| `--simular` | Sem câmera: usa fotos de teste do dataset. Sem modelo, a contagem usa os rótulos do dataset |
+| `--simular` | Sem câmera: em vez de pedir à câmera, publica uma foto de teste do dataset em `ovitrampa/cam1/foto`. Precisa do `servico_contagem.py` rodando, que conta igual ao fluxo real |
 | `--host 0.0.0.0` | Deixa abrir o dashboard de outro computador ou celular na mesma rede |
 
 **Desenvolvendo o frontend:** com o backend rodando, `cd dashboard-web; npm run dev` abre em http://localhost:5173 com recarga automática. API e WebSocket são repassados para a porta 8000.
@@ -132,7 +216,7 @@ Todos os comandos rodam a partir da raiz, com `python/.venv/Scripts/python.exe`:
 | `python/treino/avaliar_contagem.py` | Imprime mAP50, mAP50-95, precisão e recall no teste. Escolhe na validação o limiar de confiança de menor erro de contagem (MAE) e mede o MAE no teste. Salva o limiar em `weights/conf_contagem.txt`. |
 | `python/contar_ovos.py <imagens...>` | Mostra "N ovos" por imagem e salva as imagens anotadas em `capturas/anotadas/`. Opções: `--modelo` e `--conf`. |
 
-Os pesos ficam em `python/runs/<treino>/weights/best.pt`, fora do git.
+O modelo final (`python/runs/ovos_yolo26s-2/weights/best.pt` + `conf_contagem.txt`) está versionado. O `last.pt` e os demais pesos ficam fora do git.
 
 ## Dataset e licença
 
@@ -145,7 +229,8 @@ https://universe.roboflow.com/mosquito-eggs/aedes-eggs-mntab/dataset/6
 |---------|----------|
 | `esp32-camera-contadora/` | Submódulo com o firmware da ESP32-CAM (PlatformIO + FreeRTOS) |
 | `python/` | Scripts de captura (`captura_mqtt.py`), contagem (`contar_ovos.py`) e treino (`treino/`), além do zip do dataset |
-| `python/dashboard/` | Backend do dashboard (API, WebSocket, MQTT, YOLO, SQLite) |
+| `applications/contador/` | Serviço de contagem via MQTT (`servico_contagem.py`) e script de teste (`enviar_imagem.py`) |
+| `python/dashboard/` | Backend do dashboard (API, WebSocket, cliente MQTT, SQLite) |
 | `dashboard-web/` | Frontend React do dashboard |
 | `capturas/` | Fotos capturadas e anotadas (fora do git) |
 | `Projeto-Embarcados_CesarSchool-CSBC.pdf` | Enunciado da disciplina |

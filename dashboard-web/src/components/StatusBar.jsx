@@ -17,21 +17,13 @@ export default function StatusBar({ conectado, status }) {
       </div>
     );
   }
-  const { mqtt, camera, modelo } = status;
+  const { mqtt, camera, servico } = status;
 
   const cam = {
     online: ["ok", "Câmera online"],
     sem_resposta: ["ruim", "Câmera sem resposta"],
     desconhecida: ["neutro", "Câmera: aguardando"],
   }[camera.estado] ?? ["neutro", camera.estado];
-
-  const mod = modelo.pronto
-    ? ["ok", "Modelo YOLO"]
-    : modelo.carregando
-      ? ["neutro", "Carregando modelo"]
-      : status.simulacao
-        ? ["neutro", "Modelo: rótulos"]
-        : ["ruim", "Sem modelo"];
 
   return (
     <div className="pills">
@@ -42,7 +34,11 @@ export default function StatusBar({ conectado, status }) {
         detalhe={`Broker ${mqtt.broker}${mqtt.erro ? ` — ${mqtt.erro}` : ""}`}
       />
       <Pill estado={cam[0]} rotulo={cam[1]} detalhe={`Última foto: ${fmtHora(camera.ultima_foto)}`} />
-      <Pill estado={mod[0]} rotulo={mod[1]} detalhe={modelo.caminho ?? modelo.erro ?? ""} />
+      <Pill
+        estado={servico.online ? "ok" : "ruim"}
+        rotulo={servico.online ? "Contador online" : "Contador offline"}
+        detalhe="applications/contador/servico_contagem.py"
+      />
     </div>
   );
 }

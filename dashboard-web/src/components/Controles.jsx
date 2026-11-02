@@ -77,28 +77,12 @@ export default function Controles({ status, conectado, capturar, salvarConfig })
       </label>
 
       {config && (
-        <label className="campo">
+        <p className="campo">
           <span>
-            Limiar de confiança: <strong>{config.conf_efetivo.toFixed(2)}</strong>
-            {config.conf == null ? " (padrão da avaliação)" : ""}
+            Limiar de confiança (do serviço):{" "}
+            <strong>{config.conf_ultimo != null ? config.conf_ultimo.toFixed(2) : "—"}</strong>
           </span>
-          <div className="slider-linha">
-            <input
-              type="range"
-              min="0.05"
-              max="0.95"
-              step="0.05"
-              value={config.conf_efetivo}
-              disabled={desabilitado}
-              onChange={(e) => tentar(() => salvarConfig({ conf: parseFloat(e.target.value) }))}
-            />
-            {config.conf != null && (
-              <button className="link" onClick={() => tentar(() => salvarConfig({ conf: null }))}>
-                padrão
-              </button>
-            )}
-          </div>
-        </label>
+        </p>
       )}
 
       {erro && <p className="msg-erro">{erro}</p>}
