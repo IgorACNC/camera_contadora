@@ -200,6 +200,24 @@ Abra **http://localhost:8000**. Opções:
 | `--simular` | Sem câmera: em vez de pedir à câmera, publica uma foto de teste do dataset em `ovitrampa/cam1/foto`. Precisa do `servico_contagem.py` rodando, que conta igual ao fluxo real |
 | `--host 0.0.0.0` | Deixa abrir o dashboard de outro computador ou celular na mesma rede |
 
+### Enviar relatório PDF por e-mail
+
+No fim da página do dashboard, informe o e-mail de destino e clique em **Gerar e enviar PDF**. O anexo contém um resumo das capturas e uma tabela com até 5.000 registros do histórico SQLite. Para enviar, configure o SMTP **no terminal em que o backend será iniciado**; as credenciais não são salvas no projeto.
+
+Exemplo no PowerShell usando SMTP do Gmail (use uma senha de app, não a senha normal da conta):
+
+```powershell
+$env:SMTP_HOST = "smtp.gmail.com"
+$env:SMTP_PORT = "587"
+$env:SMTP_USER = "seu.email@gmail.com"
+$env:SMTP_PASSWORD = "sua-senha-de-app"
+$env:SMTP_FROM = "seu.email@gmail.com"
+python/.venv/Scripts/python.exe python/servidor_dashboard.py --simular
+```
+
+Mantenha essas variáveis definidas nessa janela enquanto o servidor estiver rodando. Para outros provedores, use o host e a porta SMTP com STARTTLS fornecidos pelo provedor; `SMTP_FROM` pode ser omitida se o remetente for igual a `SMTP_USER`. Se não estiver configurado, a interface informa que faltam as configurações SMTP.
+
+
 **Desenvolvendo o frontend:** com o backend rodando, `cd dashboard-web; npm run dev` abre em http://localhost:5173 com recarga automática. API e WebSocket são repassados para a porta 8000.
 
 ## Modelo YOLO (contagem)

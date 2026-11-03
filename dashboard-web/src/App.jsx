@@ -7,6 +7,7 @@ import Etapas from "./components/Etapas.jsx";
 import Foto from "./components/Foto.jsx";
 import Graficos from "./components/Graficos.jsx";
 import Historico from "./components/Historico.jsx";
+import Relatorio from "./components/Relatorio.jsx";
 
 export default function App() {
   const { conectado, status, capturas, etapas, capturar, salvarConfig } = useDashboard();
@@ -48,6 +49,7 @@ export default function App() {
       </div>
 
       <Graficos capturas={capturas} />
+      <Relatorio />
       <Historico capturas={capturas} selecionada={fotoMostrada?.id} selecionar={setSelecionada} />
     </div>
   );

@@ -8,16 +8,21 @@ dashboard (ex.: captura_mqtt.py, enviar_imagem.py) entram no histórico com orig
 
 import asyncio
 import contextlib
+import io
+import os
 import re
+import smtplib
+import ssl
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from email.message import EmailMessage
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, EmailStr
 
 from captura_mqtt import PASTA_CAPTURAS
 
@@ -59,6 +64,166 @@ class Hub:
 class ConfigEntrada(BaseModel):
     auto_ativo: bool | None = None
     intervalo_min: float | None = Field(default=None, ge=0.5, le=24 * 60)
+
+
+class RelatorioEntrada(BaseModel):
+    email: EmailStr
+
+
+def gerar_pdf_relatorio(capturas: list[dict], gerado_em: datetime) -> bytes:
+    """Cria um PDF simples e imprimível com resumo e histórico de capturas."""
+    try:
+        from reportlab.lib import colors
+        from reportlab.lib.pagesizes import A4, landscape
+        from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+        from reportlab.lib.units import mm
+        from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+    except ImportError as exc:
+        raise RuntimeError("Dependência de PDF ausente. Instale python/requirements-dashboard.txt") from exc
+
+    ok = [c for c in capturas if c["status"] == "ok"]
+    ultimas10 = ok[-10:]
+    ovos = [c["ovos"] for c in ok if c.get("ovos") is not None]
+    media_ovos = sum(ovos) / len(ovos) if ovos else 0
+    ultima = ok[-1] if ok else None
+    hoje = gerado_em.date()
+    capturas_hoje = [c for c in capturas if datetime.fromisoformat(c["inicio"]).date() == hoje]
+    erros_hoje = sum(c["status"] == "erro" for c in capturas_hoje)
+
+    def media_campo(registros, campo):
+        valores = [c[campo] for c in registros if c.get(campo) is not None]
+        return sum(valores) / len(valores) if valores else None
+
+    def fmt_ms(valor):
+        return f"{valor:.0f} ms" if valor is not None else "—"
+
+    def fmt_pct(valor):
+        return f"{valor * 100:.1f}%" if valor is not None else "—"
+
+    media_ultimos10 = media_campo(ultimas10, "ovos")
+    total_erros = sum(c["status"] == "erro" for c in capturas)
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), rightMargin=15 * mm, leftMargin=15 * mm,
+                            topMargin=14 * mm, bottomMargin=17 * mm, title="Relatório de ovos")
+    estilos = getSampleStyleSheet()
+    verde = colors.HexColor("#2f6b3f")
+    texto = colors.HexColor("#1d211c")
+    fraco = colors.HexColor("#6a7067")
+    borda = colors.HexColor("#d9ded8")
+    largura = landscape(A4)[0] - 30 * mm
+    estilo_titulo = ParagraphStyle("TituloRelatorio", parent=estilos["Title"], fontName="Helvetica-Bold",
+                                   fontSize=21, leading=25, textColor=verde, alignment=0, spaceAfter=2)
+    estilo_meta = ParagraphStyle("MetaRelatorio", parent=estilos["Normal"], fontSize=9, textColor=fraco)
+    estilo_secao = ParagraphStyle("SecaoRelatorio", parent=estilos["Heading2"], fontName="Helvetica-Bold",
+                                  fontSize=12, leading=15, textColor=texto, spaceBefore=4, spaceAfter=7)
+    estilo_rotulo = ParagraphStyle("RotuloIndicador", parent=estilos["Normal"], fontSize=8, leading=10,
+                                   textColor=fraco)
+    estilo_valor = ParagraphStyle("ValorIndicador", parent=estilos["Normal"], fontName="Helvetica-Bold",
+                                  fontSize=13, leading=17, textColor=texto, wordWrap="CJK")
+    elementos = [Paragraph("Relatório de análise de ovos", estilo_titulo),
+                 Paragraph(f"Dashboard da ovitrampa cam1 &nbsp; · &nbsp; Gerado em "
+                           f"{gerado_em.strftime('%d/%m/%Y às %H:%M:%S')}", estilo_meta),
+                 Spacer(1, 7 * mm), Paragraph("Resumo geral", estilo_secao)]
+
+    def cartao(rotulo, valor):
+        conteudo = Table([
+            [Paragraph(rotulo, estilo_rotulo)],
+            [Paragraph(str(valor), estilo_valor)],
+        ], colWidths=[largura_cartao - 18])
+        conteudo.setStyle(TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING", (0, 0), (0, 0), 2), ("BOTTOMPADDING", (0, 1), (0, 1), 0),
+        ]))
+        return conteudo
+
+    indicadores = [
+        ("Capturas no histórico", str(len(capturas))), ("Capturas com sucesso", str(len(ok))),
+        ("Capturas com erro", str(total_erros)), ("Capturas de hoje", f"{len(capturas_hoje)} ({erros_hoje} erro(s))"),
+        ("Total de ovos detectados", str(sum(ovos))),
+        ("Média de ovos por captura", f"{media_ovos:.1f}" if ovos else "—"),
+        ("Ovos na última captura", str(ultima["ovos"]) if ultima and ultima.get("ovos") is not None else "—"),
+        ("Média de ovos (últimas 10)", f"{media_ultimos10:.1f}" if media_ultimos10 is not None else "—"),
+        ("Confiança média (última)", fmt_pct(ultima.get("conf_media") if ultima else None)),
+        ("Tempo médio de captura¹", fmt_ms(media_campo(ultimas10, "tempo_captura_ms"))),
+        ("Tempo médio de inferência¹", fmt_ms(media_campo(ultimas10, "tempo_inferencia_ms")),),
+    ]
+    largura_cartao = largura / 4
+    linhas_cartoes = []
+    for inicio in range(0, len(indicadores), 4):
+        linha = [cartao(rotulo, valor) for rotulo, valor in indicadores[inicio:inicio + 4]]
+        linha.extend([""] * (4 - len(linha)))
+        linhas_cartoes.append(linha)
+    resumo = Table(linhas_cartoes, colWidths=[largura_cartao] * 4, hAlign="LEFT")
+    resumo.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f4f7f3")),
+        ("BOX", (0, 0), (-1, -1), .6, borda), ("INNERGRID", (0, 0), (-1, -1), .5, borda),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("LEFTPADDING", (0, 0), (-1, -1), 9),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 7), ("TOPPADDING", (0, 0), (-1, -1), 8),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+    ]))
+    elementos.extend([resumo, Spacer(1, 3 * mm),
+                      Paragraph("¹ Médias calculadas sobre as últimas 10 capturas bem-sucedidas.", estilo_meta),
+                      Spacer(1, 6 * mm), Paragraph("Histórico de capturas", estilo_secao)])
+    linhas = [["ID", "Data e hora", "Origem", "Ovos", "Confiança média", "Tempo de captura", "Tempo de inferência", "Status"]]
+    for c in capturas:
+        dt = datetime.fromisoformat(c["inicio"]).strftime("%d/%m/%Y %H:%M:%S")
+        linhas.append([str(c["id"]), dt, {"auto": "Automática", "externa": "Externa"}.get(c["origem"], "Manual"),
+                       str(c["ovos"] if c.get("ovos") is not None else "—"),
+                       f"{c['conf_media'] * 100:.1f}%" if c.get("conf_media") is not None else "—",
+                       f"{c['tempo_captura_ms']:.0f} ms" if c.get("tempo_captura_ms") is not None else "—",
+                       f"{c['tempo_inferencia_ms']:.0f} ms" if c.get("tempo_inferencia_ms") is not None else "—",
+                       "OK" if c["status"] == "ok" else "Erro" if c["status"] == "erro" else "Em andamento"])
+    larguras = [12 * mm, 39 * mm, 28 * mm, 22 * mm, 34 * mm, 40 * mm, 42 * mm, largura - 217 * mm]
+    tabela = Table(linhas, repeatRows=1, colWidths=larguras, hAlign="LEFT")
+    tabela.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), verde), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("FONTSIZE", (0, 0), (-1, -1), 8),
+        ("GRID", (0, 0), (-1, -1), .35, borda),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f4f7f3")]),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6), ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    elementos.append(tabela)
+
+    def rodape(canvas, documento):
+        canvas.saveState()
+        canvas.setStrokeColor(borda)
+        canvas.line(15 * mm, 12 * mm, landscape(A4)[0] - 15 * mm, 12 * mm)
+        canvas.setFont("Helvetica", 8)
+        canvas.setFillColor(fraco)
+        canvas.drawString(15 * mm, 7 * mm, "Relatório de contagem de ovos · Ovitrampa cam1")
+        canvas.drawRightString(landscape(A4)[0] - 15 * mm, 7 * mm, f"Página {documento.page}")
+        canvas.restoreState()
+
+    doc.build(elementos, onFirstPage=rodape, onLaterPages=rodape)
+    return buffer.getvalue()
+
+
+def enviar_email_relatorio(destinatario: str, pdf: bytes):
+    host = os.getenv("SMTP_HOST")
+    usuario = os.getenv("SMTP_USER")
+    senha = os.getenv("SMTP_PASSWORD")
+    remetente = os.getenv("SMTP_FROM", usuario or "")
+    try:
+        porta = int(os.getenv("SMTP_PORT", "587"))
+    except ValueError as exc:
+        raise RuntimeError("SMTP_PORT deve ser um número") from exc
+    if not host or not remetente:
+        raise RuntimeError("Configure SMTP_HOST e SMTP_FROM (ou SMTP_USER) nas variáveis de ambiente")
+    msg = EmailMessage()
+    msg["Subject"] = "Relatório de contagem de ovos"
+    msg["From"] = remetente
+    msg["To"] = destinatario
+    msg.set_content("Olá! Segue em anexo o relatório PDF das contagens e métricas do dashboard.")
+    msg.add_attachment(pdf, maintype="application", subtype="pdf", filename="relatorio_ovos.pdf")
+    contexto = ssl.create_default_context()
+    with smtplib.SMTP(host, porta, timeout=20) as servidor:
+        servidor.starttls(context=contexto)
+        if usuario and senha:
+            servidor.login(usuario, senha)
+        servidor.send_message(msg)
 
 
 def agora() -> datetime:
@@ -210,6 +375,18 @@ def criar_app(opcoes: Opcoes) -> FastAPI:
     @app.get("/api/capturas")
     async def api_capturas(limite: int = HISTORICO_INICIAL):
         return banco.ultimas(max(1, min(limite, 5000)))
+
+    @app.post("/api/relatorio/enviar")
+    async def api_enviar_relatorio(entrada: RelatorioEntrada):
+        capturas = banco.ultimas(5000)
+        try:
+            pdf = gerar_pdf_relatorio(capturas, agora())
+            await asyncio.to_thread(enviar_email_relatorio, str(entrada.email), pdf)
+        except RuntimeError as exc:
+            raise HTTPException(503, str(exc)) from exc
+        except (OSError, smtplib.SMTPException) as exc:
+            raise HTTPException(502, f"Falha ao enviar o e-mail: {exc}") from exc
+        return {"enviado": True, "email": str(entrada.email), "capturas": len(capturas)}
 
     @app.post("/api/capturar")
     async def api_capturar():
