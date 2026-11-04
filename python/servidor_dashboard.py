@@ -12,14 +12,21 @@ import argparse
 from pathlib import Path
 
 import uvicorn
+from dotenv import load_dotenv
 
 from dashboard.servidor import Opcoes, criar_app
 
 PYTHON_DIR = Path(__file__).resolve().parent
+RAIZ = PYTHON_DIR.parent
 ZIP_DATASET = PYTHON_DIR / "aedes eggs.v6i.yolov8.zip"
 
 
 def main():
+    # Variáveis já definidas no terminal têm prioridade sobre o .env (override=False).
+    env = RAIZ / ".env"
+    if env.is_file():
+        load_dotenv(env, override=False)
+        print("Configuração lida de .env")
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--mqtt-host", default="localhost", help="endereço do broker MQTT")
     parser.add_argument("--mqtt-port", type=int, default=1883)

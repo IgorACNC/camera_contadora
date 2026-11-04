@@ -1,4 +1,5 @@
 secrets.h
+.env
 .claude/
 capturas/
 python/.venv/
