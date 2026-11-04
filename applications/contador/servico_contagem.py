@@ -77,9 +77,19 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default="localhost", help="endereço do broker MQTT")
     parser.add_argument("--port", type=int, default=1883)
-    parser.add_argument("--modelo", default=str(MODELO_PADRAO))
+    parser.add_argument(
+        "--modelo",
+        default=str(MODELO_PADRAO),
+        help="caminho do .pt ou URI do MLflow, ex.: models:/contador-ovos-aedes@producao",
+    )
     parser.add_argument("--conf", type=float, help="limiar de confiança (padrão: o escolhido na avaliação)")
     args = parser.parse_args()
+
+    if args.modelo.startswith(("models:/", "runs:/")):
+        sys.path.insert(0, str(RAIZ / "python"))
+        from rastreio_mlflow import resolver_modelo
+
+        args.modelo = resolver_modelo(args.modelo)
 
     conf = args.conf if args.conf is not None else conf_padrao(args.modelo)
     model = YOLO(args.modelo)

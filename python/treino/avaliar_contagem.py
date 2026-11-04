@@ -4,9 +4,14 @@
 2. Escolhe o limiar de confiança de menor MAE na validação (0.10 a 0.60, passo 0.05).
 3. Mede MAE e erro percentual no teste com esse limiar.
 O limiar escolhido é salvo em weights/conf_contagem.txt (lido por contar_ovos.py).
+
+As métricas vão para a run do MLflow do treino (mlflow_run_id.txt na pasta do treino) ou, se
+ela não existir, para uma run nova. Com --registrar, o modelo (best.pt + conf) vira uma nova
+versão de "contador-ovos-aedes" no Model Registry; --alias producao move o alias para ela.
 """
 
 import argparse
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -15,6 +20,7 @@ from ultralytics import YOLO
 PYTHON_DIR = Path(__file__).resolve().parent.parent
 DATASET = PYTHON_DIR / "datasets" / "ovos"
 MODELO_PADRAO = PYTHON_DIR / "runs" / "ovos_yolo26s" / "weights" / "best.pt"
+sys.path.insert(0, str(PYTHON_DIR))
 CONFS = np.round(np.arange(0.10, 0.601, 0.05), 2)
 MAX_DET = 1000
 
@@ -44,6 +50,9 @@ def erros(confs, reais, conf):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--modelo", default=str(MODELO_PADRAO))
+    parser.add_argument("--registrar", action="store_true", help="registrar o modelo no Model Registry do MLflow")
+    parser.add_argument("--alias", help='alias da versão registrada, ex.: "producao" (implica --registrar)')
+    parser.add_argument("--sem-mlflow", action="store_true", help="não registrar nada no MLflow")
     args = parser.parse_args()
     model = YOLO(args.modelo)
 
@@ -57,10 +66,11 @@ def main():
     confs_val, reais_val = confiancas_e_rotulos(model, "valid")
     print("\n=== Contagem na VALIDAÇÃO ===")
     print(" conf    MAE   erro %")
-    tabela = []
+    tabela, tabela_val = [], []
     for c in CONFS:
         mae, pct = erros(confs_val, reais_val, c)
         tabela.append((mae, c))
+        tabela_val.append((c, mae, pct))
         print(f" {c:.2f} {mae:6.2f} {pct:7.1f}")
     conf_escolhido = float(min(tabela)[1])
 
@@ -75,6 +85,47 @@ def main():
     arquivo_conf = Path(args.modelo).parent / "conf_contagem.txt"
     arquivo_conf.write_text(f"{conf_escolhido:.2f}\n")
     print(f"\nconf salvo em {arquivo_conf}")
+
+    if not args.sem_mlflow:
+        registrar_no_mlflow(args, m, tabela_val, conf_escolhido, mae, pct, len(reais_test), int(reais_test.sum()))
+
+
+def registrar_no_mlflow(args, m, tabela_val, conf_escolhido, mae, pct, n_imagens, n_ovos):
+    """Loga a avaliação na run do treino (importando o treino se ele ainda não estiver no MLflow)."""
+    import mlflow
+
+    import rastreio_mlflow as rm
+
+    rm.configurar()
+    pasta_treino = Path(args.modelo).resolve().parent.parent
+    run_id = rm.run_id_salvo(pasta_treino) or rm.registrar_treino_existente(pasta_treino)
+
+    with mlflow.start_run(run_id=run_id):
+        mlflow.log_metrics(
+            {
+                "teste/mAP50": float(m.box.map50),
+                "teste/mAP50-95": float(m.box.map),
+                "teste/precisao": float(m.box.mp),
+                "teste/recall": float(m.box.mr),
+                "teste/mae_contagem": float(mae),
+                "teste/erro_pct_contagem": float(pct),
+                "validacao/mae_contagem": float(min(t[1] for t in tabela_val)),
+                "conf_contagem": conf_escolhido,  # métrica, não parâmetro: pode mudar se reavaliar
+            }
+        )
+        # step = limiar em centésimos: no MLflow vira a curva "MAE x limiar" da validação
+        for c, mae_val, pct_val in tabela_val:
+            mlflow.log_metrics(
+                {"validacao/mae_por_conf": float(mae_val), "validacao/erro_pct_por_conf": float(pct_val)},
+                step=int(round(c * 100)),
+            )
+        mlflow.log_params({"teste_imagens": n_imagens, "teste_ovos": n_ovos})
+        linhas = ["conf,mae,erro_pct"] + [f"{c:.2f},{a:.4f},{b:.4f}" for c, a, b in tabela_val]
+        mlflow.log_text("\n".join(linhas) + "\n", "avaliacao/contagem_validacao.csv")
+    print(f"[MLflow] avaliação registrada na run {run_id}")
+
+    if args.registrar or args.alias:
+        rm.registrar_modelo(args.modelo, run_id, alias=args.alias)
 
 
 if __name__ == "__main__":

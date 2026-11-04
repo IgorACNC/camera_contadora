@@ -11,3 +11,7 @@ dashboard-web/dist/
 __pycache__/
 last.pt
 yolo26s.pt
+# MLflow (banco local, artefatos e id da run em cada pasta de treino)
+python/mlflow.db
+python/mlruns/
+mlflow_run_id.txt

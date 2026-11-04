@@ -237,9 +237,39 @@ Todos os comandos rodam a partir da raiz, com `python/.venv/Scripts/python.exe`:
 | `python/treino/preparar_dataset.py` | Extrai o zip do dataset e gera `python/datasets/ovos/` com a classe única e o `data.yaml`. Também tira do treino as imagens que vêm da mesma foto original de uma imagem de validação ou teste. |
 | `python/treino/treinar.py` | Treina o YOLO26s (150 épocas, patience 30). Opções: `--batch` (padrão 8), `--workers` (padrão 2) e `--retomar <last.pt>`, que continua um treino interrompido, inclusive em outra máquina. |
 | `python/treino/avaliar_contagem.py` | Imprime mAP50, mAP50-95, precisão e recall no teste. Escolhe na validação o limiar de confiança de menor erro de contagem (MAE) e mede o MAE no teste. Salva o limiar em `weights/conf_contagem.txt`. |
-| `python/contar_ovos.py <imagens...>` | Mostra "N ovos" por imagem e salva as imagens anotadas em `capturas/anotadas/`. Opções: `--modelo` e `--conf`. |
+| `python/treino/registrar_mlflow.py` | Importa no MLflow um treino já feito (padrão: `ovos_yolo26s-2`) e registra o modelo com o alias `producao`. Veja [MLflow](#mlflow-rastreamento-de-experimentos-e-registro-do-modelo). |
+| `python/contar_ovos.py <imagens...>` | Mostra "N ovos" por imagem e salva as imagens anotadas em `capturas/anotadas/`. Opções: `--modelo` (caminho ou `models:/...` do MLflow) e `--conf`. |
 
 O modelo final (`python/runs/ovos_yolo26s-2/weights/best.pt` + `conf_contagem.txt`) está versionado. O `last.pt` e os demais pesos ficam fora do git.
+
+### MLflow (rastreamento de experimentos e registro do modelo)
+
+O treino, a avaliação e o modelo ficam registrados no **MLflow** (`python/rastreio_mlflow.py`). O `mlflow` vem no `requirements-treino.txt`.
+
+- **Onde fica:** por padrão, num banco local `python/mlflow.db` (SQLite), com os arquivos em `python/mlruns/`. Os dois ficam fora do git. Para usar um servidor MLflow, defina `$env:MLFLOW_TRACKING_URI` (ex.: `http://localhost:5000`). `$env:MLFLOW_EXPERIMENT_NAME` troca o experimento (padrão `contagem-ovos-aedes`).
+- **Treino** (`treinar.py`): cada treino vira uma run com todos os argumentos, as perdas, a mAP, a precisão, o recall e o learning rate por época (ao vivo), os gráficos e o `best.pt`. O id da run fica em `runs/<treino>/mlflow_run_id.txt`, então o `--retomar` continua na mesma run. Use `--nome-run` para dar um nome, ou `--sem-mlflow` para desligar.
+- **Avaliação** (`avaliar_contagem.py`): grava na run do treino as métricas do teste (`teste/mAP50`, `teste/mae_contagem`...), a curva MAE x limiar da validação e o limiar escolhido. Com `--registrar`, publica o modelo; com `--alias producao`, também move o alias para essa versão.
+- **Modelo registrado:** `contador-ovos-aedes`, no formato pyfunc. Leva o `best.pt` e o `conf_contagem.txt`. Recebe um DataFrame com a coluna `imagem` (caminho) e devolve `ovos` e `conf_media`.
+
+**Registrar o modelo que já vem no repositório** (não precisa de dataset nem de GPU):
+
+```powershell
+python/.venv/Scripts/python.exe python/treino/registrar_mlflow.py   # importa ovos_yolo26s-2 e cria a versão @producao
+```
+
+**Abrir a interface** (http://localhost:5000):
+
+```powershell
+python/.venv/Scripts/mlflow.exe ui --backend-store-uri sqlite:///python/mlflow.db
+```
+
+**Usar a versão registrada** no serviço de contagem ou no `contar_ovos.py`. O modelo é baixado do MLflow, e o limiar vem junto:
+
+```powershell
+python/.venv/Scripts/python.exe applications/contador/servico_contagem.py --modelo models:/contador-ovos-aedes@producao
+```
+
+Ciclo para um modelo novo: `treinar.py` → `avaliar_contagem.py --modelo <best.pt> --alias producao` → reiniciar o serviço com `--modelo models:/contador-ovos-aedes@producao`.
 
 ## Dataset e licença
 

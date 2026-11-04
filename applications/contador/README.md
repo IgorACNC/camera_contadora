@@ -59,4 +59,4 @@ A:\Mosquitto\mosquitto_sub.exe -t ovitrampa/cam1/contagem -v
 A:\Mosquitto\mosquitto_sub.exe -t ovitrampa/servico/status -v
 ```
 
-Opções do serviço: `--host`, `--port`, `--modelo` (padrão `python/runs/ovos_yolo26s-2/weights/best.pt`) e `--conf` (padrão: o valor de `conf_contagem.txt`, ao lado do modelo).
+Opções do serviço: `--host`, `--port`, `--modelo` (padrão `python/runs/ovos_yolo26s-2/weights/best.pt`; aceita também uma versão do MLflow, ex.: `models:/contador-ovos-aedes@producao`) e `--conf` (padrão: o valor de `conf_contagem.txt`, ao lado do modelo).
