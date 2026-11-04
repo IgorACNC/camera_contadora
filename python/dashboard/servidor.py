@@ -9,6 +9,7 @@ dashboard (ex.: captura_mqtt.py, enviar_imagem.py) entram no histórico com orig
 import asyncio
 import contextlib
 import io
+import math
 import os
 import re
 import smtplib
@@ -22,7 +23,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, EmailStr
+from pydantic import BaseModel, Field
 
 from captura_mqtt import PASTA_CAPTURAS
 
@@ -34,6 +35,7 @@ FRONT_DIST = PASTA_CAPTURAS.parent / "dashboard-web" / "dist"
 TIMEOUT_CAPTURA_S = 30
 HISTORICO_INICIAL = 200
 CONFIG_PADRAO = {"auto_ativo": False, "intervalo_min": 10.0}
+INTERVALO_ENVIO_S = 60
 
 
 @dataclass
@@ -67,7 +69,7 @@ class ConfigEntrada(BaseModel):
 
 
 class RelatorioEntrada(BaseModel):
-    email: EmailStr
+    email: str
 
 
 def gerar_pdf_relatorio(capturas: list[dict], gerado_em: datetime) -> bytes:
@@ -205,7 +207,7 @@ def enviar_email_relatorio(destinatario: str, pdf: bytes):
     host = os.getenv("SMTP_HOST")
     usuario = os.getenv("SMTP_USER")
     senha = os.getenv("SMTP_PASSWORD")
-    remetente = os.getenv("SMTP_FROM", usuario or "")
+    remetente = os.getenv("SMTP_FROM") or usuario or ""
     try:
         porta = int(os.getenv("SMTP_PORT", "587"))
     except ValueError as exc:
@@ -224,6 +226,20 @@ def enviar_email_relatorio(destinatario: str, pdf: bytes):
         if usuario and senha:
             servidor.login(usuario, senha)
         servidor.send_message(msg)
+
+
+def ler_destinos() -> list[str]:
+    """E-mails autorizados a receber o relatório (RELATORIO_DESTINOS, separados por vírgula)."""
+    destinos = []
+    for email in os.getenv("RELATORIO_DESTINOS", "").split(","):
+        email = email.strip().lower()
+        if email and email not in destinos:
+            destinos.append(email)
+    return destinos
+
+
+def smtp_configurado() -> bool:
+    return bool(os.getenv("SMTP_HOST") and (os.getenv("SMTP_FROM") or os.getenv("SMTP_USER")))
 
 
 def agora() -> datetime:
@@ -259,7 +275,10 @@ def criar_app(opcoes: Opcoes) -> FastAPI:
     hub = Hub()
     banco = Banco(PASTA_CAPTURAS / "dashboard.db")
     trava = asyncio.Lock()
-    estado = {"config": banco.ler_config(CONFIG_PADRAO), "proxima_auto": None, "etapa": None, "conf_ultimo": None}
+    trava_envio = asyncio.Lock()
+    destinos = ler_destinos()
+    estado = {"config": banco.ler_config(CONFIG_PADRAO), "proxima_auto": None, "etapa": None, "conf_ultimo": None,
+              "ultimo_envio": None}
     loop_ref: dict = {}
 
     def agendar(coro_fn):
@@ -376,17 +395,34 @@ def criar_app(opcoes: Opcoes) -> FastAPI:
     async def api_capturas(limite: int = HISTORICO_INICIAL):
         return banco.ultimas(max(1, min(limite, 5000)))
 
+    @app.get("/api/relatorio/destinos")
+    async def api_destinos_relatorio():
+        return {"destinos": destinos, "smtp_configurado": smtp_configurado()}
+
     @app.post("/api/relatorio/enviar")
     async def api_enviar_relatorio(entrada: RelatorioEntrada):
-        capturas = banco.ultimas(5000)
-        try:
-            pdf = gerar_pdf_relatorio(capturas, agora())
-            await asyncio.to_thread(enviar_email_relatorio, str(entrada.email), pdf)
-        except RuntimeError as exc:
-            raise HTTPException(503, str(exc)) from exc
-        except (OSError, smtplib.SMTPException) as exc:
-            raise HTTPException(502, f"Falha ao enviar o e-mail: {exc}") from exc
-        return {"enviado": True, "email": str(entrada.email), "capturas": len(capturas)}
+        if not destinos:
+            raise HTTPException(503, "Nenhum destinatário configurado: defina RELATORIO_DESTINOS no terminal do servidor")
+        email = entrada.email.strip().lower()
+        if email not in destinos:
+            raise HTTPException(403, "Destinatário não autorizado")
+        if trava_envio.locked():
+            raise HTTPException(429, "Já há um envio em andamento")
+        async with trava_envio:
+            if estado["ultimo_envio"] is not None:
+                restante = INTERVALO_ENVIO_S - (time.monotonic() - estado["ultimo_envio"])
+                if restante > 0:
+                    raise HTTPException(429, f"Aguarde {math.ceil(restante)} s para enviar outro relatório")
+            capturas = banco.ultimas(5000)
+            try:
+                pdf = await asyncio.to_thread(gerar_pdf_relatorio, capturas, agora())
+                await asyncio.to_thread(enviar_email_relatorio, email, pdf)
+            except RuntimeError as exc:
+                raise HTTPException(503, str(exc)) from exc
+            except (OSError, smtplib.SMTPException) as exc:
+                raise HTTPException(502, f"Falha ao enviar o e-mail: {exc}") from exc
+            estado["ultimo_envio"] = time.monotonic()
+        return {"enviado": True, "email": email, "capturas": len(capturas)}
 
     @app.post("/api/capturar")
     async def api_capturar():

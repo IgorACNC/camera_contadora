@@ -1,9 +1,22 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 export default function Relatorio() {
+  const [destinos, setDestinos] = useState(null);
+  const [smtpConfigurado, setSmtpConfigurado] = useState(false);
   const [email, setEmail] = useState("");
   const [enviando, setEnviando] = useState(false);
   const [mensagem, setMensagem] = useState(null);
+
+  useEffect(() => {
+    fetch("/api/relatorio/destinos")
+      .then((r) => r.json())
+      .then((dados) => {
+        setDestinos(dados.destinos);
+        setSmtpConfigurado(dados.smtp_configurado);
+        setEmail(dados.destinos[0] ?? "");
+      })
+      .catch((erro) => setMensagem({ tipo: "erro", texto: erro.message }));
+  }, []);
 
   async function enviar(event) {
     event.preventDefault();
@@ -29,15 +42,32 @@ export default function Relatorio() {
     <section className="card">
       <h2>Enviar relatório PDF</h2>
       <p className="vazio">O PDF inclui o resumo e o histórico de até 5.000 capturas do dashboard.</p>
-      <form className="form-relatorio" onSubmit={enviar}>
-        <label className="campo campo-email">
-          E-mail de destino
-          <input type="email" required maxLength={254} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="nome@exemplo.com" />
-        </label>
-        <button className="botao-principal botao-relatorio" type="submit" disabled={enviando}>
-          {enviando ? "Enviando…" : "Gerar e enviar PDF"}
-        </button>
-      </form>
+      {destinos && !destinos.length ? (
+        <p className="msg-erro">
+          Nenhum destinatário configurado. Defina RELATORIO_DESTINOS no terminal do servidor (veja o README).
+        </p>
+      ) : destinos ? (
+        <>
+          {!smtpConfigurado && (
+            <p className="msg-erro">SMTP não configurado no servidor: defina SMTP_HOST e SMTP_USER (veja o README).</p>
+          )}
+          <form className="form-relatorio" onSubmit={enviar}>
+            <label className="campo campo-email">
+              E-mail de destino
+              <select value={email} onChange={(e) => setEmail(e.target.value)}>
+                {destinos.map((d) => (
+                  <option key={d} value={d}>
+                    {d}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button className="botao-principal botao-relatorio" type="submit" disabled={enviando || !smtpConfigurado}>
+              {enviando ? "Enviando…" : "Gerar e enviar PDF"}
+            </button>
+          </form>
+        </>
+      ) : null}
       {mensagem && <p className={mensagem.tipo === "erro" ? "msg-erro" : "msg-sucesso"} role="status">{mensagem.texto}</p>}
     </section>
   );

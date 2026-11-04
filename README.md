@@ -50,6 +50,7 @@ python -m venv python/.venv
 python/.venv/Scripts/python.exe -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
 python/.venv/Scripts/python.exe -m pip install -r python/requirements-treino.txt -r python/requirements-dashboard.txt
 cd dashboard-web; npm install; npm run build; cd ..
+Copy-Item .env.example .env   # depois preencha o SMTP e os destinatários do relatório
 ```
 
 O modelo treinado já vem no repositório: `python/runs/ovos_yolo26s-2/weights/best.pt`, com o limiar em `conf_contagem.txt`. Não é preciso treinar.
@@ -202,20 +203,24 @@ Abra **http://localhost:8000**. Opções:
 
 ### Enviar relatório PDF por e-mail
 
-No fim da página do dashboard, informe o e-mail de destino e clique em **Gerar e enviar PDF**. O anexo contém um resumo das capturas e uma tabela com até 5.000 registros do histórico SQLite. Para enviar, configure o SMTP **no terminal em que o backend será iniciado**; as credenciais não são salvas no projeto.
+No fim da página do dashboard, escolha um dos destinatários autorizados e clique em **Gerar e enviar PDF**. O anexo contém um resumo das capturas e uma tabela com até 5.000 registros do histórico SQLite.
 
-Exemplo no PowerShell usando SMTP do Gmail (use uma senha de app, não a senha normal da conta):
+A configuração fica no arquivo `.env` da raiz, que está fora do git porque tem senha. Copie o `.env.example` para `.env` e preencha (no Gmail, use uma senha de app, não a senha normal da conta):
 
-```powershell
-$env:SMTP_HOST = "smtp.gmail.com"
-$env:SMTP_PORT = "587"
-$env:SMTP_USER = "seu.email@gmail.com"
-$env:SMTP_PASSWORD = "sua-senha-de-app"
-$env:SMTP_FROM = "seu.email@gmail.com"
-python/.venv/Scripts/python.exe python/servidor_dashboard.py --simular
+```ini
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=seu.email@gmail.com
+SMTP_PASSWORD=sua-senha-de-app
+SMTP_FROM=
+RELATORIO_DESTINOS=pessoa1@exemplo.com,pessoa2@exemplo.com
 ```
 
-Mantenha essas variáveis definidas nessa janela enquanto o servidor estiver rodando. Para outros provedores, use o host e a porta SMTP com STARTTLS fornecidos pelo provedor; `SMTP_FROM` pode ser omitida se o remetente for igual a `SMTP_USER`. Se não estiver configurado, a interface informa que faltam as configurações SMTP.
+- **Destinatários:** a página só envia para os e-mails de `RELATORIO_DESTINOS`, separados por vírgula. Qualquer outro endereço é recusado (403). Sem nenhum, o envio fica desativado.
+- **Mudanças:** o `.env` é lido ao iniciar o servidor. Para mudar a lista ou o SMTP, reinicie o `servidor_dashboard.py`.
+- **Limite:** 1 envio por minuto no servidor todo.
+- **`$env:` no terminal:** continua funcionando e tem prioridade sobre o `.env`.
+- **Outros provedores:** use o host e a porta SMTP com STARTTLS do provedor. `SMTP_FROM` pode ficar vazio se o remetente for o `SMTP_USER`. Sem SMTP configurado, a página avisa e desabilita o botão.
 
 
 **Desenvolvendo o frontend:** com o backend rodando, `cd dashboard-web; npm run dev` abre em http://localhost:5173 com recarga automática. API e WebSocket são repassados para a porta 8000.
