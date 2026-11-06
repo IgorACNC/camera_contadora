@@ -1,6 +1,6 @@
 # camera_contadora — contagem de ovos de *Aedes aegypti* em ovitrampas
 
-istema IoT que fotografa ovitrampas com uma **ESP32-CAM** e conta os ovos de *Aedes aegypti* com um modelo **YOLO**. As fotos chegam ao PC via **MQTT**, e um script Python pede a foto, recebe a imagem e roda a contagem.
+Sistema IoT que fotografa ovitrampas com uma **ESP32-CAM** e conta os ovos de *Aedes aegypti* com um modelo **YOLO**. As fotos chegam ao PC via **MQTT**, e um script Python pede a foto, recebe a imagem e roda a contagem.
 
 Projeto da disciplina **Sistemas Embarcados** (CESAR School).
 
