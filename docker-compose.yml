@@ -1,0 +1,50 @@
+# Sobe broker MQTT + serviço de contagem + dashboard.
+#   docker compose up --build            # com a ESP32-CAM
+#   DASHBOARD_ARGS=--simular docker compose up --build   # sem câmera (fotos do dataset)
+# Dashboard em http://localhost:8000. A ESP32-CAM aponta o MQTT_HOST para o IP deste PC (porta 1883).
+
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./docker/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+
+  contador:
+    build:
+      context: .
+      target: contador
+      args:
+        TORCH_INDEX_URL: ${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cpu}
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-America/Sao_Paulo}
+    depends_on:
+      - mosquitto
+    volumes:
+      - capturas:/app/capturas
+
+  dashboard:
+    build:
+      context: .
+      target: dashboard
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-America/Sao_Paulo}
+    depends_on:
+      - mosquitto
+      - contador
+    env_file:
+      - path: .env
+        required: false
+    command: --mqtt-host mosquitto ${DASHBOARD_ARGS:-}
+    ports:
+      - "8000:8000"
+    volumes:
+      # Mesma pasta do contador: o dashboard serve as fotos que ele salva.
+      - capturas:/app/capturas
+
+volumes:
+  capturas:

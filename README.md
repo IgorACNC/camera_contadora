@@ -98,6 +98,24 @@ Abra **http://localhost:8000** e clique em **Capturar agora**.
 
 Mais detalhes: [Dashboard](#dashboard-tempo-real) · [Serviço de contagem](applications/contador/README.md) · [Modelo YOLO](#modelo-yolo-contagem).
 
+## Rodar com Docker
+
+Alternativa aos passos 2, 3 e 5: sobe o Mosquitto, o serviço de contagem e o dashboard com um comando. Só precisa do Docker (com Compose).
+
+```sh
+cp .env.example .env                              # opcional: SMTP do relatório
+docker compose up --build                         # com a ESP32-CAM
+DASHBOARD_ARGS=--simular docker compose up --build  # sem câmera (fotos do dataset)
+```
+
+No PowerShell, para simular: `$env:DASHBOARD_ARGS="--simular"; docker compose up --build`.
+
+- **Dashboard:** http://localhost:8000.
+- **Câmera:** o `MQTT_HOST` do `secrets.h` continua sendo o IP do PC. A porta 1883 do container é publicada no PC (libere no firewall, como no passo 3).
+- **Capturas:** ficam no volume `capturas`, compartilhado entre o contador e o dashboard (inclui o `dashboard.db`). Para copiar: `docker compose cp contador:/app/capturas ./capturas`.
+- **GPU NVIDIA:** a imagem usa o PyTorch de CPU. Para CUDA, defina `TORCH_INDEX_URL=https://download.pytorch.org/whl/cu126` antes do build e adicione `gpus: all` ao serviço `contador` no `docker-compose.yml`.
+- **Treino e MLflow** continuam fora do Docker (venv local).
+
 ## Firmware da câmera (outro repositório)
 
 O firmware da ESP32-CAM fica em **https://github.com/IgorACNC/esp32-camera-contadora** e está incluído aqui como **submódulo**, na pasta `esp32-camera-contadora/`.
