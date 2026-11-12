@@ -69,7 +69,7 @@ Reinicie o serviço do Mosquitto. Se a câmera não conectar, veja [MQTT](#mqtt)
 ### 4. Gravar a câmera (só com a ESP32-CAM)
 
 1. Descubra o IP do PC na rede Wi-Fi com `ipconfig` (campo "Endereço IPv4" do adaptador Wi-Fi).
-2. No submódulo `esp32-camera-contadora/`, copie `include/secrets.example.h` para `include/secrets.h` e preencha `WIFI_SSID`, `WIFI_PASSWORD` e `MQTT_HOST` (o IP do passo 1). A rede precisa ser de 2.4 GHz.
+2. No submódulo `esp32-esp8266/`, copie `include/secrets.example.h` para `include/secrets.h` e preencha `WIFI_SSID`, `WIFI_PASSWORD` e `MQTT_HOST` (o IP do passo 1). A rede precisa ser de 2.4 GHz.
 3. Grave com o PlatformIO, como explicado no README do submódulo. O Serial deve mostrar `MQTT conectado`.
 
 > Se o IP do PC mudar (DHCP), a câmera mostra `MQTT falhou, state=-2`. Atualize o `MQTT_HOST` ou reserve o IP no roteador.
@@ -118,7 +118,7 @@ No PowerShell, para simular: `$env:DASHBOARD_ARGS="--simular"; docker compose up
 
 ## Firmware da câmera (outro repositório)
 
-O firmware da ESP32-CAM fica em **https://github.com/IgorACNC/esp32-camera-contadora** e está incluído aqui como **submódulo**, na pasta `esp32-camera-contadora/`.
+O firmware da ESP32-CAM fica em **https://github.com/IgorACNC/esp32-camera-contadora** e está incluído aqui como **submódulo**, na pasta `esp32-esp8266/`.
 
 As instruções de compilar e gravar (PlatformIO), a configuração do `secrets.h` e a arquitetura FreeRTOS estão no README de lá.
 
@@ -137,8 +137,8 @@ git submodule update --init
 **Atualizar o ponteiro do submódulo** depois de novos commits no repo da câmera:
 
 ```sh
-git submodule update --remote esp32-camera-contadora
-git add esp32-camera-contadora
+git submodule update --remote esp32-esp8266
+git add esp32-esp8266
 git commit -m "Atualiza firmware da câmera"
 git push
 ```
@@ -298,10 +298,12 @@ https://universe.roboflow.com/mosquito-eggs/aedes-eggs-mntab/dataset/6
 
 | Caminho | Conteúdo |
 |---------|----------|
-| `esp32-camera-contadora/` | Submódulo com o firmware da ESP32-CAM (PlatformIO + FreeRTOS) |
+| `esp32-esp8266/` | Submódulo com o firmware da ESP32-CAM (PlatformIO + FreeRTOS) |
 | `python/` | Scripts de captura (`captura_mqtt.py`), contagem (`contar_ovos.py`) e treino (`treino/`), além do zip do dataset |
 | `applications/contador/` | Serviço de contagem via MQTT (`servico_contagem.py`) e script de teste (`enviar_imagem.py`) |
 | `python/dashboard/` | Backend do dashboard (API, WebSocket, cliente MQTT, SQLite) |
 | `dashboard-web/` | Frontend React do dashboard |
 | `capturas/` | Fotos capturadas e anotadas (fora do git) |
+| `docs/` | Relatórios do projeto e resultados do modelo |
+| `schematics/` | Esquemático do hardware (ESP32-CAM AI Thinker + ESP32-CAM-MB) |
 | `Projeto-Embarcados_CesarSchool-CSBC.pdf` | Enunciado da disciplina |
