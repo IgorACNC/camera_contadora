@@ -5,7 +5,7 @@
 .agents
 skills-lock.json
 *.pdf
-esp32-camera-contadora/
+esp32-esp8266/
 capturas/
 docker-compose.yml
 **/__pycache__/
